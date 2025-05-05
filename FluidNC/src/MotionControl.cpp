@@ -14,6 +14,8 @@
 #include "Platform.h"        // WEAK_LINK
 #include "Settings.h"        // coords
 
+#include "Spindles/Spindle.h"
+
 #include <cmath>
 
 // M_PI is not defined in standard C/C++ but some compilers
@@ -270,7 +272,12 @@ bool mc_dwell(int32_t milliseconds) {
         return false;
     }
     protocol_buffer_synchronize();
-    return dwell_ms(milliseconds, DwellMode::Dwell);
+    bool follow_ret = true;
+    if (spindle->follow_hack(milliseconds, &follow_ret)) {
+        return follow_ret;
+    } else {
+        return dwell_ms(milliseconds, DwellMode::Dwell);
+    }
 }
 
 volatile bool probing;

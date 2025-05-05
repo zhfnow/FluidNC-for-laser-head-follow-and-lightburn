@@ -19,6 +19,7 @@
 
 #include "SettingsDefinitions.h"  // gcode_echo
 #include "Machine/LimitPin.h"
+#include "Spindles/Spindle.h"  // Required for spindle calls
 #include "Job.h"
 #include "Driver/restart.h"
 
@@ -589,6 +590,18 @@ static void protocol_do_feedhold() {
             protocol_cancel_jogging();
             return;  // Do not change the state to Hold
     }
+
+    // Call spindle follow_stop before entering Hold state
+    if (spindle) {  // Use global spindle pointer
+        log_info("Feed Hold: Calling spindle->follow_stop()...");
+        if (!spindle->follow_stop()) {  // Use global spindle pointer
+            log_error("spindle->follow_stop() failed during Feed Hold!");
+            // Optional: Decide if this failure should trigger an alarm or just log
+        } else {
+            log_info("spindle->follow_stop() successful.");
+        }
+    }
+
     set_state(State::Hold);
 }
 
@@ -736,6 +749,17 @@ static void protocol_do_cycle_start() {
                 if (spindle_stop_ovr.value) {
                     spindle_stop_ovr.bit.restoreCycle = true;  // Set to restore in suspend routine and cycle start after.
                 } else {
+                    // Call spindle follow_start when resuming from Hold
+                    if (spindle) {  // Use global spindle pointer
+                        log_info("Cycle Start (Resume): Calling spindle->follow_start()...");
+                        if (!spindle->follow_start()) {  // Use global spindle pointer
+                            log_error("spindle->follow_start() failed during Cycle Resume! Cycle start aborted.");
+                            // Stay in Hold state, user needs to resolve issue or reset.
+                        } else {
+                            log_info("spindle->follow_start() successful.");
+                        }
+                    }
+
                     protocol_do_initiate_cycle();
                 }
             }

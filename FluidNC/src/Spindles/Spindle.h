@@ -106,6 +106,10 @@ namespace Spindles {
             handler.item("m6_macro", _m6_macro);
         }
 
+        virtual bool follow_hack(uint32_t ms, bool* ret) { return false; }
+        virtual bool follow_start() { return true; }
+        virtual bool follow_stop() { return true; }
+
         // Virtual base classes require a virtual destructor.
         virtual ~Spindle() {}
 
