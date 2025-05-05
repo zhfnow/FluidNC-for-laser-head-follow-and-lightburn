@@ -7,6 +7,8 @@
 */
 
 #include "LaserSpindle.h"
+#include "esp_timer.h"    // Use ESP-IDF timer for timeouts
+#include "../Protocol.h"  // Include for send_alarm and ExecAlarm
 
 #include "../Machine/MachineConfig.h"
 
@@ -19,13 +21,13 @@ namespace Spindles {
 
     void Laser::config_message() {
         log_info(name() << " Ena:" << _enable_pin.name() << " Out:" << _output_pin.name() << " Freq:" << _pwm_freq
-                        << "Hz Period:" << _output_pin.maxDuty() << atc_info()
-                        << " follow_pin" << _follow_pin.name()      //
-                        << " center_pin" << _center_pin.name()      //
-                        << " rapup_pin" << _rapup_pin.name()        //
-                        << " drill_ok_pin" << _drill_ok_pin.name()  //
-                        << " cut_ok_pin" << _cut_ok_pin.name()      //
-                        << " back_ok_pin" << _back_ok_pin.name()    //
+                        << "Hz Period:" << _output_pin.maxDuty() << atc_info()  //
+                        << " follow_pin" << _follow_pin.name()                  //
+                        << " center_pin" << _center_pin.name()                  //
+                        << " rapup_pin" << _rapup_pin.name()                    //
+                        << " drill_ok_pin" << _drill_ok_pin.name()              //
+                        << " cut_ok_pin" << _cut_ok_pin.name()                  //
+                        << " back_ok_pin" << _back_ok_pin.name()                //
                         << " alarm_pin" << _alarm_pin.name());
     }
 
@@ -72,17 +74,20 @@ namespace Spindles {
         log_info(name() << " set out:" << duty);
     }
 
-    bool IRAM_ATTR Laser::follow_start() {
+    bool Laser::follow_start() {
         // 启动
         _follow_pin.write(true);
         // 等待到达穿孔位
         log_info(name() << " wait drill ...... ");
+        uint64_t drill_start_time_us = esp_timer_get_time();
         while (!_drill_ok_pin.read()) {
-            if (!dwell_ms(1, DwellMode::Dwell)) {
-                log_info(name() << " abort on wait drill ok pin");
-                _follow_pin.write(false);
+            if ((esp_timer_get_time() - drill_start_time_us) > 1000000) {  // 1000ms = 1,000,000 us
+                log_error(name() << " wait drill timeout!");
+                send_alarm(ExecAlarm::SpindleControl);  // Set system alarm state
+                _follow_pin.write(false);               // Ensure follow pin is turned off on timeout
                 return false;
             }
+            delay_ms(1);  // Yield/delay slightly
         }
         log_info(name() << " wait drill ok");
 
@@ -93,21 +98,27 @@ namespace Spindles {
 
         // 等待到达切割位
         log_info(name() << " wait cut ...... ");
+        uint64_t cut_start_time_us = esp_timer_get_time();
         while (!_cut_ok_pin.read()) {
-            if (!dwell_ms(1, DwellMode::Dwell)) {
-                log_info(name() << " abort on wait cut ok pin");
-                _output_pin.setDuty(0);
+            if ((esp_timer_get_time() - cut_start_time_us) > 1000000) {  // 1000ms = 1,000,000 us
+                log_error(name() << " wait cut timeout!");
+                send_alarm(ExecAlarm::SpindleControl);  // Set system alarm state
+                // 停止激光并尝试回中
+                laser_start = false;
+                _output_pin.setDuty(0);  // Turn off laser immediately
                 _follow_pin.write(false);
                 return false;
             }
+            delay_ms(1);  // Yield/delay slightly
         }
         log_info(name() << " wait cut ok");
         return true;
     }
 
-    bool IRAM_ATTR Laser::follow_stop() {
+    bool Laser::follow_stop() {
         // 停止激光
         laser_start = false;
+        _output_pin.setDuty(0);  // Turn off laser immediately
 
         // 通知回中
         _follow_pin.write(false);
@@ -115,10 +126,7 @@ namespace Spindles {
         log_info(name() << " wait back ...... ");
 
         // back ok没有反馈，只能直接延迟
-        if (!dwell_ms(200, DwellMode::Dwell)) {
-            log_info(name() << " abort on wait back");
-            return false;
-        }
+        delay_ms(200);
 
         // while (!_back_ok_pin.read()) {
         //     delay_msec(1, DwellMode::Dwell);
@@ -127,7 +135,7 @@ namespace Spindles {
         return true;
     }
 
-    bool IRAM_ATTR Laser::follow_hack(uint32_t ms, bool* ret) {
+    bool Laser::follow_hack(uint32_t ms, bool* ret) {
         if (ms == 333) {
             *ret = follow_start();
             return true;
